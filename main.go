@@ -4,23 +4,25 @@ import (
 	"oss/config"
 	_ "oss/docs"
 	"oss/lib/cors"
-	logger "oss/lib/log"
+	"oss/lib/postgres"
+	models "oss/model"
 	minioService "oss/service/minio"
 
+	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
-	gs "github.com/swaggo/gin-swagger"
-	"github.com/swaggo/gin-swagger/swaggerFiles"
 )
 
 // @title minio-breakpoint-upload API
 // @version 1.0
 // @description  This is a minio upload server.
 // @BasePath /api/v1/
-func  main()  {
+func main() {
+	config.Init()
+	postgres.Init()
+	models.Init()
 	router := gin.New()
 	router.Use(cors.Cors())
-
-	router.GET("/swagger/*any", gs.WrapHandler(swaggerFiles.Handler))
+	//router.GET("/swagger/*any", gs.WrapHandler(swaggerFiles.Handler))
 
 	minio := router.Group("/minio")
 	{
@@ -31,8 +33,7 @@ func  main()  {
 		minio.POST("/update_chunk", minioService.UpdateMultipart)
 	}
 
+	router.Use(static.Serve("/", static.LocalFile("./web/dist/", false)))
+
 	router.Run(":" + config.PORT)
-
-	logger.LOG.Infof("service is running on port:", config.PORT)
-
 }

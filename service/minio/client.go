@@ -7,29 +7,29 @@ import (
 	"oss/lib/minio_ext"
 
 	"github.com/minio/minio-go"
-	miniov6 "github.com/minio/minio-go/v6"
+	miniov7 "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+var minioClient *minio.Client = nil
 
-var minioClient  * minio.Client = nil
+var coreClient *miniov7.Core = nil
 
-var coreClient  * miniov6.Core = nil
-
-var minioClientExt * minio_ext.Client = nil
+var minioClientExt *minio_ext.Client = nil
 
 var mutex *sync.Mutex
 
-func init(){
+func init() {
 	mutex = new(sync.Mutex)
 }
 
-func getClients()(*minio.Client, *miniov6.Core, *minio_ext.Client, error){
-	var client1 * minio.Client
-	var client2 * miniov6.Core
-	var client3 * minio_ext.Client
+func getClients() (*minio.Client, *miniov7.Core, *minio_ext.Client, error) {
+	var client1 *minio.Client
+	var client2 *miniov7.Core
+	var client3 *minio_ext.Client
 	mutex.Lock()
-	
-	if nil != minioClient && nil != coreClient && nil != minioClientExt{
+
+	if nil != minioClient && nil != coreClient && nil != minioClientExt {
 		client1 = minioClient
 		client2 = coreClient
 		client3 = minioClientExt
@@ -43,29 +43,33 @@ func getClients()(*minio.Client, *miniov6.Core, *minio_ext.Client, error){
 	secure := config.MinioSecure == "true"
 
 	var err error
-	
-	if nil == minioClient{
+
+	if nil == minioClient {
 		minioClient, err = minio.New(aliasedURL, accessKeyID, secretAccessKey, secure)
 	}
 
-	if nil != err{
+	if nil != err {
 		mutex.Unlock()
 		return nil, nil, nil, err
 	}
 
 	client1 = minioClient
 
-	if nil == coreClient{
-		coreClient,err =  miniov6.NewCore(aliasedURL, accessKeyID, secretAccessKey,secure)
+	if nil == coreClient {
+		opts := &miniov7.Options{
+			Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+			Secure: secure,
+		}
+		coreClient, err = miniov7.NewCore(aliasedURL, opts)
 	}
 
 	client2 = coreClient
 
-	if nil == minioClientExt{
+	if nil == minioClientExt {
 		minioClientExt, err = minio_ext.New(aliasedURL, accessKeyID, secretAccessKey, secure)
 	}
 
-	if nil != err{
+	if nil != err {
 		mutex.Unlock()
 		return nil, nil, nil, err
 	}

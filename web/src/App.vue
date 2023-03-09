@@ -1,8 +1,8 @@
 <template>
-  <uploader 
+  <uploader
           ref="uploader"
-          :options="options" 
-          :autoStart="false" 
+          :options="options"
+          :autoStart="false"
           @file-added="onFileAdded"
           fileStatusText="fileStatusText"
           class="uploader-app">
@@ -24,14 +24,15 @@
   import qs from 'qs'
 
   const chunkSize = 1024 * 1024 * 64;
-  const md5ChunkSize = 1024 * 1024 * 1;
+  const md5ChunkSize = 1024 * 1024 * 5;
 
   export default {
+  name: "upload",
     data () {
       return {
         progress: 0,
         status: '初始状态',
-        urlPrex: 'http://192.168.207.34:39988/minio',
+        urlPrex: 'http://192.168.2.26:39988/minio',
       }
     },
     created() {
@@ -126,7 +127,7 @@
 
           function uploadMinio(url, e) {
             return new Promise((resolve, reject) => {
-              
+
               axios.put(url, e.target.result
                 ).then(function (res) {
                   etags[currentChunk] = res.headers.etag;
@@ -181,9 +182,9 @@
               } else {
                 return;
               }
-              
+
             }
-            
+
           };
 
           function completeUpload(){
@@ -208,20 +209,20 @@
           for (let i = 0; i < successParts.length; i++) {
             successChunks[i] = successParts[i].split("-")[0];
           }
-          
+
           var urls = new Array();
           var etags = new Array();
 
           console.log('上传分片...');
           this.status='上传中';
-          
+
           {
             loadNext();
             fileReader.onload = async (e) => {
               await uploadChunk(e);
               fileReader.abort();
               currentChunk++;
-        
+
               if (currentChunk < chunks) {
                   console.log(`第${currentChunk}个分片上传完成, 开始第${currentChunk +1}/${chunks}个分片上传`);
                   this.progress = Math.ceil((currentChunk / chunks)*100);
@@ -255,7 +256,7 @@
             fileReader.onload = (e) => {
                 spark.append(e.target.result);   // Append array buffer
                 currentChunk++;
-         
+
                 if (currentChunk < chunks) {
                     console.log(`第${currentChunk}分片解析完成, 开始第${currentChunk +1}/${chunks}分片解析`);
                     loadNext();
@@ -274,7 +275,7 @@
                 console.warn('oops, something went wrong.');
                 file.cancel();
             };
-         
+
             function loadMd5Next() {
                 let start = currentChunk * chunkSize;
                 let end = ((start + md5ChunkSize) >= file.size) ? file.size : start + md5ChunkSize;
@@ -284,7 +285,7 @@
         },
         async computeMD5Success(file) {
             await this.getSuccessChunks(file);
-            
+
             if (file.uploadID == "" || file.uuid == "") { //未上传过
               await this.newMultiUpload(file);
               if (file.uploadID != "" && file.uuid != "") {

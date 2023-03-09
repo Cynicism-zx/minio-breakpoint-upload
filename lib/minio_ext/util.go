@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/minio/minio-go/v6/pkg/s3utils"
+	"github.com/minio/minio-go/v7/pkg/s3utils"
 )
 
 // regCred matches credential string in HTTP header

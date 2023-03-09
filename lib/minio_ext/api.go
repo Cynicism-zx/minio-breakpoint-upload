@@ -24,7 +24,7 @@ import (
 
 	"github.com/minio/minio-go/pkg/s3signer"
 	"github.com/minio/minio-go/pkg/s3utils"
-	"github.com/minio/minio-go/v6/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -141,7 +141,6 @@ func (r *lockedRandSource) Seed(seed int64) {
 	r.src.Seed(seed)
 	r.lk.Unlock()
 }
-
 
 // Different types of url lookup supported by the server.Initialized to BucketLookupAuto
 const (
@@ -904,8 +903,7 @@ func (c Client) newRequest(method string, metadata requestMetadata) (req *http.R
 	return req, nil
 }
 
-
-func (c Client) GenUploadPartSignedUrl(uploadID string, bucketName string, objectName string, partNumber int, size int64, expires time.Duration, bucketLocation string) (string, error){
+func (c Client) GenUploadPartSignedUrl(uploadID string, bucketName string, objectName string, partNumber int, size int64, expires time.Duration, bucketLocation string) (string, error) {
 	signedUrl := ""
 
 	// Input validation.
@@ -939,17 +937,17 @@ func (c Client) GenUploadPartSignedUrl(uploadID string, bucketName string, objec
 	customHeader := make(http.Header)
 
 	reqMetadata := requestMetadata{
-		presignURL:		  true,
-		bucketName:       bucketName,
-		objectName:       objectName,
-		queryValues:      urlValues,
-		customHeader:     customHeader,
+		presignURL:   true,
+		bucketName:   bucketName,
+		objectName:   objectName,
+		queryValues:  urlValues,
+		customHeader: customHeader,
 		//contentBody:      reader,
-		contentLength:    size,
+		contentLength: size,
 		//contentMD5Base64: md5Base64,
 		//contentSHA256Hex: sha256Hex,
-		expires:		  int64(expires/time.Second),
-		bucketLocation:		bucketLocation,
+		expires:        int64(expires / time.Second),
+		bucketLocation: bucketLocation,
 	}
 
 	req, err := c.newRequest("PUT", reqMetadata)
@@ -959,9 +957,8 @@ func (c Client) GenUploadPartSignedUrl(uploadID string, bucketName string, objec
 	}
 
 	signedUrl = req.URL.String()
-	return signedUrl,nil
+	return signedUrl, nil
 }
-
 
 // executeMethod - instantiates a given method, and retries the
 // request upon any error up to maxRetries attempts in a binomially

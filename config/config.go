@@ -2,18 +2,18 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 
 	"github.com/json-iterator/go"
-	logger "oss/lib/log"
 )
 
-var MysqlIp string
-var MysqlUsername string
-var MysqlPassword string
-var MysqlPort string
-var MysqlDbName string
+var PostgresIp string
+var PostgresUsername string
+var PostgresPassword string
+var PostgresPort string
+var PostgresDbName string
 var PORT string
 var MinioAddress string
 var MinioAccessKeyId string
@@ -23,28 +23,27 @@ var MinioBucket string
 var MinioBasePath string
 var MinioLocation string
 
-
-func loadFromConfigFile(configFilePath string)error{
-	file,err:= os.Open(configFilePath)
-	if err!= nil{
-		logger.LOG.Error(err)
-         return err
+func loadFromConfigFile(configFilePath string) error {
+	file, err := os.Open(configFilePath)
+	if err != nil {
+		fmt.Println("open config file failed:" + err.Error())
+		panic(err)
 	}
 
-	data,err := ioutil.ReadAll(file)
+	data, err := ioutil.ReadAll(file)
 
-	if nil != err{
+	if nil != err {
 		return err
 	}
 
 	var json = jsoniter.ConfigCompatibleWithStandardLibrary
 	var jsonConfig jsoniter.Any = json.Get(data)
 
-	MysqlIp = jsonConfig.Get("MYSQL_IP").ToString()
-	MysqlUsername = jsonConfig.Get("MYSQL_USERNAME").ToString()
-	MysqlPassword = jsonConfig.Get("MYSQL_PASSWORD").ToString()
-	MysqlDbName = jsonConfig.Get("MYSQL_DBNAME").ToString()
-	MysqlPort = jsonConfig.Get("MYSQL_PORT").ToString()
+	PostgresIp = jsonConfig.Get("POSTGRES_IP").ToString()
+	PostgresUsername = jsonConfig.Get("POSTGRES_USERNAME").ToString()
+	PostgresPassword = jsonConfig.Get("POSTGRES_PASSWORD").ToString()
+	PostgresDbName = jsonConfig.Get("POSTGRES_DBNAME").ToString()
+	PostgresPort = jsonConfig.Get("POSTGRES_PORT").ToString()
 	PORT = jsonConfig.Get("PORT").ToString()
 	MinioAddress = jsonConfig.Get("MINIO_ADDRESS").ToString()
 	MinioAccessKeyId = jsonConfig.Get("MINIO_ACCESS_KEY_ID").ToString()
@@ -55,30 +54,20 @@ func loadFromConfigFile(configFilePath string)error{
 	MinioBasePath = jsonConfig.Get("MINIO_BASE_PATH").ToString()
 	MinioLocation = jsonConfig.Get("MINIO_LOCATION").ToString()
 
-	if MysqlIp == "" || MysqlUsername == "" || MysqlPassword == "" || MysqlPort == "" || PORT == "" || MysqlDbName == "" || MinioAddress == "" || MinioAccessKeyId == "" || MinioSecretAccessKey == "" || MinioSecure == "" {
+	if PostgresIp == "" || PostgresUsername == "" || PostgresPassword == "" || PostgresPort == "" ||
+		PORT == "" || PostgresDbName == "" || MinioAddress == "" || MinioAccessKeyId == "" ||
+		MinioSecretAccessKey == "" || MinioSecure == "" {
 		return errors.New("config is error")
 	}
-
-	//enc,err := base64.StdEncoding.DecodeString(keyTmp)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//dec,err := rsa.RsaDecrypt([]byte(enc))
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//MinioSecretAccessKey = string(dec)
 
 	return nil
 }
 
-func init(){
+func Init() {
 	configFile := "config.json"
-	err:= loadFromConfigFile(configFile)
-	if nil != err{
-		logger.LOG.Fatal("Failed to load config,Error:" + err.Error())
+	err := loadFromConfigFile(configFile)
+	if nil != err {
+		fmt.Println("load config file failed:" + err.Error())
 		return
 	}
 

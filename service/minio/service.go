@@ -1,22 +1,26 @@
 package minio
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
-	"oss/config"
-	"path"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"oss/config"
 	logger "oss/lib/log"
 	"oss/lib/minio_ext"
 	"oss/model"
 
 	"github.com/gin-gonic/gin"
-	miniov6 "github.com/minio/minio-go/v6"
-	gouuid "github.com/satori/go.uuid"
+	"github.com/minio/minio-go/pkg/s3utils"
+	miniov7 "github.com/minio/minio-go/v7"
 )
 
 const (
@@ -24,77 +28,80 @@ const (
 )
 
 type ComplPart struct {
-	PartNumber int	`json:"partNumber"`
-	ETag string	`json:"eTag"`
+	PartNumber int    `json:"partNumber"`
+	ETag       string `json:"eTag"`
 }
 
 type CompleteParts struct {
-	Data []ComplPart	`json:"completedParts"`
+	Data []ComplPart `json:"completedParts"`
 }
+
 // completedParts is a collection of parts sortable by their part numbers.
 // used for sorting the uploaded parts before completing the multipart request.
-type completedParts []miniov6.CompletePart
+type completedParts []miniov7.CompletePart
+
 func (a completedParts) Len() int           { return len(a) }
 func (a completedParts) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a completedParts) Less(i, j int) bool { return a[i].PartNumber < a[j].PartNumber }
 
 // completeMultipartUpload container for completing multipart upload.
 type completeMultipartUpload struct {
-	XMLName xml.Name       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CompleteMultipartUpload" json:"-"`
-	Parts   []miniov6.CompletePart `xml:"Part"`
+	XMLName xml.Name               `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CompleteMultipartUpload" json:"-"`
+	Parts   []miniov7.CompletePart `xml:"Part"`
 }
 
 func NewMultipart(ctx *gin.Context) {
-	var uuid, uploadID string
-
-	totalChunkCounts,err := strconv.Atoi(ctx.Query("totalChunkCounts"))
+	var uploadID string
+	// 以文件hash值作为文件名
+	objectName := ctx.Query("md5")
+	totalChunkCounts, err := strconv.Atoi(ctx.Query("totalChunkCounts"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, "totalChunkCounts is illegal.")
 		return
 	}
 
-	if totalChunkCounts > minio_ext.MaxPartsCount || totalChunkCounts <= 0{
+	if totalChunkCounts > minio_ext.MaxPartsCount || totalChunkCounts <= 0 {
 		ctx.JSON(http.StatusBadRequest, "totalChunkCounts is illegal.")
 		return
 	}
 
-	fileSize,err := strconv.ParseInt(ctx.Query("size"), 10, 64)
+	fileSize, err := strconv.ParseInt(ctx.Query("size"), 10, 64)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, "size is illegal.")
 		return
 	}
 
-	if fileSize > minio_ext.MaxMultipartPutObjectSize || fileSize <= 0{
+	if fileSize > minio_ext.MaxMultipartPutObjectSize || fileSize <= 0 {
 		ctx.JSON(http.StatusBadRequest, "size is illegal.")
 		return
 	}
 
-	uuid = gouuid.NewV4().String()
-	uploadID, err = newMultiPartUpload(uuid)
+	//uuid = gouuid.NewV4().String()
+	uploadID, err = newMultiPartUpload(ctx, objectName)
 	if err != nil {
-		logger.LOG.Errorf("newMultiPartUpload failed:", err.Error())
+		fmt.Printf("newMultiPartUpload failed: %s", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "newMultiPartUpload failed.")
 		return
 	}
 
 	_, err = models.InsertFileChunk(&models.FileChunk{
-		UUID:       uuid,
-		UploadID:   uploadID,
-		Md5:  		ctx.Query("md5"),
-		Size:		fileSize,
-		FileName:   ctx.Query("fileName"),
-		TotalChunks:totalChunkCounts,
+		UUID:        objectName,
+		UploadID:    uploadID,
+		Md5:         ctx.Query("md5"),
+		Size:        fileSize,
+		FileName:    ctx.Query("fileName"),
+		TotalChunks: totalChunkCounts,
 	})
 
 	if err != nil {
-		logger.LOG.Error("InsertFileChunk failed:", err.Error())
+		fmt.Println("InsertFileChunk failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "InsertFileChunk failed.")
 		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"uuid": uuid,
-		"uploadID":  uploadID,
+		"uuid":     objectName,
+		"uploadID": uploadID,
 	})
 }
 
@@ -103,13 +110,13 @@ func GetMultipartUploadUrl(ctx *gin.Context) {
 	uuid := ctx.Query("uuid")
 	uploadID := ctx.Query("uploadID")
 
-	partNumber,err := strconv.Atoi(ctx.Query("chunkNumber"))
+	partNumber, err := strconv.Atoi(ctx.Query("chunkNumber"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, "chunkNumber is illegal.")
 		return
 	}
 
-	size,err := strconv.ParseInt(ctx.Query("size"), 10, 64)
+	size, err := strconv.ParseInt(ctx.Query("size"), 10, 64)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, "size is illegal.")
 		return
@@ -119,15 +126,14 @@ func GetMultipartUploadUrl(ctx *gin.Context) {
 		return
 	}
 
-	url,err = genMultiPartSignedUrl(uuid, uploadID, partNumber, size)
+	url, err = genMultiPartSignedUrl(uuid, uploadID, partNumber, size)
 	if err != nil {
-		logger.LOG.Error("genMultiPartSignedUrl failed:", err.Error())
+		fmt.Println("genMultiPartSignedUrl failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "genMultiPartSignedUrl failed.")
 		return
 	}
 
-
-	ctx.JSON(http.StatusOK, gin.H {
+	ctx.JSON(http.StatusOK, gin.H{
 		"url": url,
 	})
 }
@@ -136,31 +142,30 @@ func CompleteMultipart(ctx *gin.Context) {
 	uuid := ctx.PostForm("uuid")
 	uploadID := ctx.PostForm("uploadID")
 
-	fileChunk, err := models.GetFileChunkByUUID(uuid)
+	//fileChunk, err := models.GetFileChunkByUUID(uuid)
+	//if err != nil {
+	//	fmt.Println("GetFileChunkByUUID failed:", err.Error())
+	//	ctx.JSON(http.StatusInternalServerError, "GetFileChunkByUUID failed.")
+	//	return
+	//}
+
+	_, err := completeMultiPartUpload(ctx, uuid, uploadID)
 	if err != nil {
-		logger.LOG.Error("GetFileChunkByUUID failed:", err.Error())
-		ctx.JSON(http.StatusInternalServerError, "GetFileChunkByUUID failed.")
+		fmt.Println("completeMultiPartUpload failed:", err.Error())
+		ctx.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	_, err = completeMultiPartUpload(uuid, uploadID)
-	if err != nil {
-		logger.LOG.Error("completeMultiPartUpload failed:", err.Error())
-		ctx.JSON(http.StatusInternalServerError, "completeMultiPartUpload failed.")
-		return
-	}
+	//fileChunk.IsUploaded = models.FileUploaded
+	//
+	//err = models.UpdateFileChunk(fileChunk)
+	//if err != nil {
+	//	fmt.Println("UpdateFileChunk failed:", err.Error())
+	//	ctx.JSON(http.StatusInternalServerError, "UpdateFileChunk failed.")
+	//	return
+	//}
 
-	fileChunk.IsUploaded = models.FileUploaded
-
-	err = models.UpdateFileChunk(fileChunk)
-	if err != nil {
-		logger.LOG.Error("UpdateFileChunk failed:", err.Error())
-		ctx.JSON(http.StatusInternalServerError, "UpdateFileChunk failed.")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{
-	})
+	ctx.JSON(http.StatusOK, gin.H{})
 }
 
 func UpdateMultipart(ctx *gin.Context) {
@@ -169,79 +174,123 @@ func UpdateMultipart(ctx *gin.Context) {
 
 	fileChunk, err := models.GetFileChunkByUUID(uuid)
 	if err != nil {
-		logger.LOG.Error("GetFileChunkByUUID failed:", err.Error())
+		fmt.Println("GetFileChunkByUUID failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "GetFileChunkByUUID failed.")
 		return
 	}
 
-	fileChunk.CompletedParts += ctx.PostForm("chunkNumber") + "-" + strings.Replace(etag, "\"","", -1) + ","
+	fileChunk.CompletedParts += ctx.PostForm("chunkNumber") + "-" + strings.Replace(etag, "\"", "", -1) + ","
 
 	err = models.UpdateFileChunk(fileChunk)
 	if err != nil {
-		logger.LOG.Error("UpdateFileChunk failed:", err.Error())
+		fmt.Println("UpdateFileChunk failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "UpdateFileChunk failed.")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-	})
+	ctx.JSON(http.StatusOK, gin.H{})
 }
 
-func newMultiPartUpload(uuid string) (string, error){
+func newMultiPartUpload(ctx context.Context, objectName string) (string, error) {
 	_, core, _, err := getClients()
 	if err != nil {
-		logger.LOG.Error("getClients failed:", err.Error())
+		fmt.Println("getClients failed:", err.Error())
 		return "", err
 	}
 
 	bucketName := config.MinioBucket
-	objectName := strings.TrimPrefix(path.Join(config.MinioBasePath, path.Join(uuid[0:1], uuid[1:2], uuid)), "/")
-
-	return core.NewMultipartUpload(bucketName, objectName, miniov6.PutObjectOptions{})
+	uploadId, err := core.NewMultipartUpload(ctx, bucketName, objectName, miniov7.PutObjectOptions{})
+	if err != nil {
+		return "", err
+	}
+	return uploadId, nil
 }
 
 func genMultiPartSignedUrl(uuid string, uploadId string, partNumber int, partSize int64) (string, error) {
-	_, _, minioClient, err := getClients()
-	if err != nil {
-		logger.LOG.Error("getClients failed:", err.Error())
-		return "", err
-	}
+	//_, _, minioClient, err := getClients()
+	//if err != nil {
+	//	fmt.Println("getClients failed:", err.Error())
+	//	return "", err
+	//}
 
 	bucketName := config.MinioBucket
-	objectName := strings.TrimPrefix(path.Join(config.MinioBasePath, path.Join(uuid[0:1], uuid[1:2], uuid)), "/")
+	objectName := uuid
 
-	return minioClient.GenUploadPartSignedUrl(uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
-
+	//return minioClient.GenUploadPartSignedUrl(uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
+	return multiPartSignedUrl(uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
 }
 
-func completeMultiPartUpload(uuid string, uploadID string) (string, error){
+func multiPartSignedUrl(uploadID string, bucketName string, objectName string, partNumber int, size int64, expires time.Duration, bucketLocation string) (string, error) {
+	signedUrl := ""
+
+	// Input validation.
+	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
+		return signedUrl, err
+	}
+	if err := s3utils.CheckValidObjectName(objectName); err != nil {
+		return signedUrl, err
+	}
+	if size > 1024*1024*1024*5 {
+		return signedUrl, errors.New("size is illegal")
+	}
+	if size <= -1 {
+		return signedUrl, errors.New("size is illegal")
+	}
+	if partNumber <= 0 {
+		return signedUrl, errors.New("partNumber is illegal")
+	}
+	if uploadID == "" {
+		return signedUrl, errors.New("uploadID is illegal")
+	}
+
+	// Get resources properly escaped and lined up before using them in http request.
+	urlValues := make(url.Values)
+	// Set part number.
+	urlValues.Set("partNumber", strconv.Itoa(partNumber))
+	// Set upload id.
+	urlValues.Set("uploadId", uploadID)
+	client, _, _, err := getClients()
+	if err != nil {
+		fmt.Println("getClients failed:", err.Error())
+		return "", err
+	}
+	req, err := client.Presign("PUT", bucketName, objectName, expires, urlValues)
+	if err != nil {
+		log.Println("newRequest failed:", err.Error())
+		return signedUrl, err
+	}
+
+	signedUrl = req.String()
+	return signedUrl, nil
+}
+
+func completeMultiPartUpload(ctx context.Context, uuid string, uploadID string) (string, error) {
 	_, core, client, err := getClients()
 	if err != nil {
-		logger.LOG.Error("getClients failed:", err.Error())
+		fmt.Println("getClients failed:", err.Error())
 		return "", err
 	}
 
 	bucketName := config.MinioBucket
-	objectName := strings.TrimPrefix(path.Join(config.MinioBasePath, path.Join(uuid[0:1], uuid[1:2], uuid)), "/")
+	objectName := uuid
 
 	partInfos, err := client.ListObjectParts(bucketName, objectName, uploadID)
 	if err != nil {
-		logger.LOG.Error("ListObjectParts failed:", err.Error())
+		fmt.Println("ListObjectParts failed:", err.Error())
 		return "", err
 	}
 
 	var complMultipartUpload completeMultipartUpload
 	for _, partInfo := range partInfos {
-		complMultipartUpload.Parts = append(complMultipartUpload.Parts, miniov6.CompletePart{
+		complMultipartUpload.Parts = append(complMultipartUpload.Parts, miniov7.CompletePart{
 			PartNumber: partInfo.PartNumber,
-			ETag: partInfo.ETag,
+			ETag:       partInfo.ETag,
 		})
 	}
 
 	// Sort all completed parts.
 	sort.Sort(completedParts(complMultipartUpload.Parts))
-
-	return core.CompleteMultipartUpload(bucketName, objectName, uploadID, complMultipartUpload.Parts)
+	return core.CompleteMultipartUpload(ctx, bucketName, objectName, uploadID, complMultipartUpload.Parts, miniov7.PutObjectOptions{})
 }
 
 func GetSuccessChunks(ctx *gin.Context) {
@@ -252,7 +301,7 @@ func GetSuccessChunks(ctx *gin.Context) {
 	for {
 		fileChunk, err := models.GetFileChunkByMD5(fileMD5)
 		if err != nil {
-			logger.LOG.Error("GetFileChunkByMD5 failed:", err.Error())
+			fmt.Println("GetFileChunkByMD5 failed:", err.Error())
 			break
 		}
 
@@ -261,11 +310,11 @@ func GetSuccessChunks(ctx *gin.Context) {
 		uploadID = fileChunk.UploadID
 
 		bucketName := config.MinioBucket
-		objectName := strings.TrimPrefix(path.Join(config.MinioBasePath, path.Join(uuid[0:1], uuid[1:2], uuid)), "/")
+		objectName := fileMD5
 
 		isExist, err := isObjectExist(bucketName, objectName)
 		if err != nil {
-			logger.LOG.Error("isObjectExist failed:", err.Error())
+			fmt.Println("isObjectExist failed:", err.Error())
 			break
 		}
 
@@ -275,7 +324,7 @@ func GetSuccessChunks(ctx *gin.Context) {
 				logger.LOG.Info("the file has been uploaded but not recorded")
 				fileChunk.IsUploaded = 1
 				if err = models.UpdateFileChunk(fileChunk); err != nil {
-					logger.LOG.Error("UpdateFileChunk failed:", err.Error())
+					fmt.Println("UpdateFileChunk failed:", err.Error())
 				}
 			}
 			res = 0
@@ -286,20 +335,20 @@ func GetSuccessChunks(ctx *gin.Context) {
 				logger.LOG.Info("the file has been recorded but not uploaded")
 				fileChunk.IsUploaded = 0
 				if err = models.UpdateFileChunk(fileChunk); err != nil {
-					logger.LOG.Error("UpdateFileChunk failed:", err.Error())
+					fmt.Println("UpdateFileChunk failed:", err.Error())
 				}
 			}
 		}
 
 		_, _, client, err := getClients()
 		if err != nil {
-			logger.LOG.Error("getClients failed:", err.Error())
+			fmt.Println("getClients failed:", err.Error())
 			break
 		}
 
 		partInfos, err := client.ListObjectParts(bucketName, objectName, uploadID)
 		if err != nil {
-			logger.LOG.Error("ListObjectParts failed:", err.Error())
+			fmt.Println("ListObjectParts failed:", err.Error())
 			break
 		}
 
@@ -310,12 +359,49 @@ func GetSuccessChunks(ctx *gin.Context) {
 		break
 	}
 
-	ctx.JSON(http.StatusOK, gin.H {
-		"resultCode" : strconv.Itoa(res),
-		"uuid": uuid,
-		"uploaded": uploaded,
-		"uploadID": uploadID,
-		"chunks": chunks,
+	{ // 无依赖版本
+		//objectName := ctx.Query("md5")
+		//uploadID := ctx.Query("uploadID") // 如果没有uploadID，说明是第一次上传，需要上传所有分片
+		//uuid = gouuid.NewV4().String()
+		//bucketName := config.MinioBucket
+		//isExist, err := isObjectExist(bucketName, objectName)
+		//if err != nil {
+		//	fmt.Println("isObjectExist failed:", err.Error())
+		//	ctx.JSON(http.StatusInternalServerError, "isObjectExist failed")
+		//}
+		//if isExist {
+		//	ctx.JSON(http.StatusOK, gin.H{
+		//		"resultCode": "0",
+		//		"uuid":       uuid,
+		//		"uploaded":   "1",
+		//		"uploadID":   uploadID,
+		//		"chunks":     chunks,
+		//	})
+		//}
+		//_, _, client, err := getClients()
+		//if err != nil {
+		//	fmt.Println("getClients failed:", err.Error())
+		//	ctx.JSON(http.StatusInternalServerError, "getClients failed")
+		//}
+		//
+		//// 列出已经上传的分片
+		//partInfos, err := client.ListObjectParts(bucketName, objectName, uploadID)
+		//if err != nil {
+		//	fmt.Println("ListObjectParts failed:", err.Error())
+		//	ctx.JSON(http.StatusInternalServerError, "listObjectParts failed")
+		//}
+		//
+		//for _, partInfo := range partInfos {
+		//	chunks += strconv.Itoa(partInfo.PartNumber) + "-" + partInfo.ETag + ","
+		//}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"resultCode": strconv.Itoa(res),
+		"uuid":       uuid,
+		"uploaded":   uploaded,
+		"uploadID":   uploadID,
+		"chunks":     chunks,
 	})
 }
 
@@ -326,14 +412,14 @@ func isObjectExist(bucketName string, objectName string) (bool, error) {
 
 	client, _, _, err := getClients()
 	if err != nil {
-		logger.LOG.Error("getClients failed:", err.Error())
+		fmt.Println("getClients failed:", err.Error())
 		return isExist, err
 	}
 
 	objectCh := client.ListObjects(bucketName, objectName, false, doneCh)
 	for object := range objectCh {
 		if object.Err != nil {
-			logger.LOG.Error(object.Err)
+			fmt.Println(object.Err)
 			return isExist, object.Err
 		}
 		isExist = true
