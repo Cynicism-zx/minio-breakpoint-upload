@@ -8,19 +8,18 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"oss/cache"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"oss/config"
-	logger "oss/lib/log"
-	"oss/lib/minio_ext"
-	"oss/model"
-
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go/pkg/s3utils"
 	miniov7 "github.com/minio/minio-go/v7"
+	"oss/config"
+	logger "oss/lib/log"
+	"oss/lib/minio_ext"
 )
 
 const (
@@ -84,7 +83,7 @@ func NewMultipart(ctx *gin.Context) {
 		return
 	}
 
-	_, err = models.InsertFileChunk(&models.FileChunk{
+	_, err = cache.InsertFileChunk(&cache.FileChunk{
 		UUID:        objectName,
 		UploadID:    uploadID,
 		Md5:         ctx.Query("md5"),
@@ -172,7 +171,7 @@ func UpdateMultipart(ctx *gin.Context) {
 	uuid := ctx.PostForm("uuid")
 	etag := ctx.PostForm("etag")
 
-	fileChunk, err := models.GetFileChunkByUUID(uuid)
+	fileChunk, err := cache.GetFileChunkByUUID(uuid)
 	if err != nil {
 		fmt.Println("GetFileChunkByUUID failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "GetFileChunkByUUID failed.")
@@ -181,7 +180,7 @@ func UpdateMultipart(ctx *gin.Context) {
 
 	fileChunk.CompletedParts += ctx.PostForm("chunkNumber") + "-" + strings.Replace(etag, "\"", "", -1) + ","
 
-	err = models.UpdateFileChunk(fileChunk)
+	err = cache.UpdateFileChunk(fileChunk)
 	if err != nil {
 		fmt.Println("UpdateFileChunk failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "UpdateFileChunk failed.")
@@ -199,7 +198,11 @@ func newMultiPartUpload(ctx context.Context, objectName string) (string, error) 
 	}
 
 	bucketName := config.MinioBucket
-	uploadId, err := core.NewMultipartUpload(ctx, bucketName, objectName, miniov7.PutObjectOptions{})
+	// TODO: 上传文件名
+	uploadId, err := core.NewMultipartUpload(ctx, bucketName, objectName, miniov7.PutObjectOptions{
+		UserMetadata:       map[string]string{"File_name": "ParallelsDesktop_18_1_0_53311_2_MacPedia.dmg"},
+		ContentDisposition: "attachment; filename=ParallelsDesktop_18_1_0_53311_2_MacPedia.dmg",
+	})
 	if err != nil {
 		return "", err
 	}
@@ -299,7 +302,7 @@ func GetSuccessChunks(ctx *gin.Context) {
 
 	fileMD5 := ctx.Query("md5")
 	for {
-		fileChunk, err := models.GetFileChunkByMD5(fileMD5)
+		fileChunk, err := cache.GetFileChunkByMD5(fileMD5)
 		if err != nil {
 			fmt.Println("GetFileChunkByMD5 failed:", err.Error())
 			break
@@ -320,10 +323,10 @@ func GetSuccessChunks(ctx *gin.Context) {
 
 		if isExist {
 			uploaded = "1"
-			if fileChunk.IsUploaded != models.FileUploaded {
+			if fileChunk.IsUploaded != cache.FileUploaded {
 				logger.LOG.Info("the file has been uploaded but not recorded")
 				fileChunk.IsUploaded = 1
-				if err = models.UpdateFileChunk(fileChunk); err != nil {
+				if err = cache.UpdateFileChunk(fileChunk); err != nil {
 					fmt.Println("UpdateFileChunk failed:", err.Error())
 				}
 			}
@@ -331,10 +334,10 @@ func GetSuccessChunks(ctx *gin.Context) {
 			break
 		} else {
 			uploaded = "0"
-			if fileChunk.IsUploaded == models.FileUploaded {
+			if fileChunk.IsUploaded == cache.FileUploaded {
 				logger.LOG.Info("the file has been recorded but not uploaded")
 				fileChunk.IsUploaded = 0
-				if err = models.UpdateFileChunk(fileChunk); err != nil {
+				if err = cache.UpdateFileChunk(fileChunk); err != nil {
 					fmt.Println("UpdateFileChunk failed:", err.Error())
 				}
 			}

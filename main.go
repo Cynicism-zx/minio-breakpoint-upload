@@ -6,8 +6,6 @@ import (
 	"oss/config"
 	_ "oss/docs"
 	"oss/lib/cors"
-	"oss/lib/postgres"
-	models "oss/model"
 	minioService "oss/service/minio"
 
 	"github.com/gin-contrib/static"
@@ -24,8 +22,8 @@ var fronted embed.FS
 // @BasePath /api/v1/
 func main() {
 	config.Init()
-	postgres.Init()
-	models.Init()
+	//postgres.Init()
+	//models.Init()
 	router := gin.New()
 	router.Use(cors.Cors())
 	//router.GET("/swagger/*any", gs.WrapHandler(swaggerFiles.Handler))
