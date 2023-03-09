@@ -1,6 +1,8 @@
 package main
 
 import (
+	"embed"
+
 	"oss/config"
 	_ "oss/docs"
 	"oss/lib/cors"
@@ -9,8 +11,12 @@ import (
 	minioService "oss/service/minio"
 
 	"github.com/gin-contrib/static"
+	//"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
+
+//go:embed web/dist
+var fronted embed.FS
 
 // @title minio-breakpoint-upload API
 // @version 1.0
