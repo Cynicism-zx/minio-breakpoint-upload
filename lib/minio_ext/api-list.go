@@ -15,7 +15,7 @@ func (c Client) ListObjectParts(bucketName, objectName, uploadID string) (partsI
 	partsInfo = make(map[int]ObjectPart)
 	for {
 		// Get list of uploaded parts a maximum of 1000 per request.
-		listObjPartsResult, err := c.listObjectPartsQuery(bucketName, objectName, uploadID, nextPartNumberMarker, 10000)
+		listObjPartsResult, err := c.listObjectPartsQuery(bucketName, objectName, uploadID, nextPartNumberMarker, 1000)
 		if err != nil {
 			return nil, err
 		}

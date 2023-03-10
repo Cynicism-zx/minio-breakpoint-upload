@@ -1,17 +1,19 @@
 package minio
 
 import (
+	"net"
+	"net/http"
 	"sync"
+	"time"
 
 	"oss/config"
 	"oss/lib/minio_ext"
 
-	"github.com/minio/minio-go"
 	miniov7 "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-var minioClient *minio.Client = nil
+var minioClient *miniov7.Client = nil
 
 var coreClient *miniov7.Core = nil
 
@@ -23,8 +25,8 @@ func init() {
 	mutex = new(sync.Mutex)
 }
 
-func getClients() (*minio.Client, *miniov7.Core, *minio_ext.Client, error) {
-	var client1 *minio.Client
+func getClients() (*miniov7.Client, *miniov7.Core, *minio_ext.Client, error) {
+	var client1 *miniov7.Client
 	var client2 *miniov7.Core
 	var client3 *minio_ext.Client
 	mutex.Lock()
@@ -43,9 +45,25 @@ func getClients() (*minio.Client, *miniov7.Core, *minio_ext.Client, error) {
 	secure := config.MinioSecure == "true"
 
 	var err error
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 10 * time.Second,
+		DisableCompression:    true,
+	}
 
+	opts := &miniov7.Options{
+		Creds:     credentials.NewStaticV4(config.MinioAccessKeyId, config.MinioSecretAccessKey, ""),
+		Transport: transport,
+	}
 	if nil == minioClient {
-		minioClient, err = minio.New(aliasedURL, accessKeyID, secretAccessKey, secure)
+		minioClient, err = miniov7.New(aliasedURL, opts)
 	}
 
 	if nil != err {
@@ -56,10 +74,6 @@ func getClients() (*minio.Client, *miniov7.Core, *minio_ext.Client, error) {
 	client1 = minioClient
 
 	if nil == coreClient {
-		opts := &miniov7.Options{
-			Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
-			Secure: secure,
-		}
 		coreClient, err = miniov7.NewCore(aliasedURL, opts)
 	}
 

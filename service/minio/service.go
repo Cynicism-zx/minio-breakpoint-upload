@@ -8,18 +8,21 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"oss/cache"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/minio/minio-go/pkg/s3utils"
-	miniov7 "github.com/minio/minio-go/v7"
+	"oss/cache"
+
 	"oss/config"
 	logger "oss/lib/log"
 	"oss/lib/minio_ext"
+
+	"github.com/gin-gonic/gin"
+	"github.com/minio/minio-go"
+	"github.com/minio/minio-go/pkg/s3utils"
+	miniov7 "github.com/minio/minio-go/v7"
 )
 
 const (
@@ -125,7 +128,7 @@ func GetMultipartUploadUrl(ctx *gin.Context) {
 		return
 	}
 
-	url, err = genMultiPartSignedUrl(uuid, uploadID, partNumber, size)
+	url, err = genMultiPartSignedUrl(ctx, uuid, uploadID, partNumber, size)
 	if err != nil {
 		fmt.Println("genMultiPartSignedUrl failed:", err.Error())
 		ctx.JSON(http.StatusInternalServerError, "genMultiPartSignedUrl failed.")
@@ -202,6 +205,7 @@ func newMultiPartUpload(ctx context.Context, objectName string) (string, error) 
 	uploadId, err := core.NewMultipartUpload(ctx, bucketName, objectName, miniov7.PutObjectOptions{
 		UserMetadata:       map[string]string{"File_name": "ParallelsDesktop_18_1_0_53311_2_MacPedia.dmg"},
 		ContentDisposition: "attachment; filename=ParallelsDesktop_18_1_0_53311_2_MacPedia.dmg",
+		ContentType:        "application/octet-stream",
 	})
 	if err != nil {
 		return "", err
@@ -209,7 +213,7 @@ func newMultiPartUpload(ctx context.Context, objectName string) (string, error) 
 	return uploadId, nil
 }
 
-func genMultiPartSignedUrl(uuid string, uploadId string, partNumber int, partSize int64) (string, error) {
+func genMultiPartSignedUrl(ctx context.Context, uuid string, uploadId string, partNumber int, partSize int64) (string, error) {
 	//_, _, minioClient, err := getClients()
 	//if err != nil {
 	//	fmt.Println("getClients failed:", err.Error())
@@ -220,10 +224,10 @@ func genMultiPartSignedUrl(uuid string, uploadId string, partNumber int, partSiz
 	objectName := uuid
 
 	//return minioClient.GenUploadPartSignedUrl(uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
-	return multiPartSignedUrl(uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
+	return multiPartSignedUrl(ctx, uploadId, bucketName, objectName, partNumber, partSize, PresignedUploadPartUrlExpireTime, config.MinioLocation)
 }
 
-func multiPartSignedUrl(uploadID string, bucketName string, objectName string, partNumber int, size int64, expires time.Duration, bucketLocation string) (string, error) {
+func multiPartSignedUrl(ctx context.Context, uploadID string, bucketName string, objectName string, partNumber int, size int64, expires time.Duration, bucketLocation string) (string, error) {
 	signedUrl := ""
 
 	// Input validation.
@@ -257,7 +261,7 @@ func multiPartSignedUrl(uploadID string, bucketName string, objectName string, p
 		fmt.Println("getClients failed:", err.Error())
 		return "", err
 	}
-	req, err := client.Presign("PUT", bucketName, objectName, expires, urlValues)
+	req, err := client.Presign(ctx, "PUT", bucketName, objectName, expires, urlValues)
 	if err != nil {
 		log.Println("newRequest failed:", err.Error())
 		return signedUrl, err
@@ -315,7 +319,7 @@ func GetSuccessChunks(ctx *gin.Context) {
 		bucketName := config.MinioBucket
 		objectName := fileMD5
 
-		isExist, err := isObjectExist(bucketName, objectName)
+		isExist, err := isObjectExist(ctx, bucketName, objectName)
 		if err != nil {
 			fmt.Println("isObjectExist failed:", err.Error())
 			break
@@ -408,7 +412,7 @@ func GetSuccessChunks(ctx *gin.Context) {
 	})
 }
 
-func isObjectExist(bucketName string, objectName string) (bool, error) {
+func isObjectExist(ctx context.Context, bucketName string, objectName string) (bool, error) {
 	isExist := false
 	doneCh := make(chan struct{})
 	defer close(doneCh)
@@ -419,15 +423,14 @@ func isObjectExist(bucketName string, objectName string) (bool, error) {
 		return isExist, err
 	}
 
-	objectCh := client.ListObjects(bucketName, objectName, false, doneCh)
-	for object := range objectCh {
-		if object.Err != nil {
-			fmt.Println(object.Err)
-			return isExist, object.Err
+	objInfo, err := client.StatObject(ctx, bucketName, objectName, miniov7.StatObjectOptions{})
+	if err != nil {
+		if e, ok := err.(minio.ErrorResponse); ok {
+			if e.StatusCode == http.StatusNotFound {
+				return false, nil
+			}
 		}
-		isExist = true
-		break
+		return false, err
 	}
-
-	return isExist, nil
+	return objInfo.Size > 0, nil
 }
